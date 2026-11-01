@@ -66,6 +66,14 @@ def test_objects_reports_a_dead_frame_loop():
     assert body["error"].startswith("ModuleNotFoundError")
 
 
+def test_objects_says_whether_frames_are_arriving():
+    source = FakeSource([])
+    client = TestClient(create_app(source, FakeChatter()))
+    assert client.get("/api/objects").json()["receiving"] is True
+    source.snapshot = lambda: (None, [], None)
+    assert client.get("/api/objects").json()["receiving"] is False
+
+
 
 def jpeg_bytes():
     buffer = io.BytesIO()

@@ -55,11 +55,11 @@ ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
 <script>
 const objects=document.getElementById('objects'),log=document.getElementById('log');
 async function refresh(){try{const r=await fetch('/api/objects');const d=await r.json();
+if(live&&!stream){if(!d.receiving)view.removeAttribute('src');else if(!view.getAttribute('src'))view.src='/stream'}
 if(d.error){objects.textContent='影像來源有問題：'+d.error;return}
 objects.replaceChildren(...d.objects.map(o=>{const li=document.createElement('li');
 li.textContent=o.name?`${o.name}：${o.detail||''}`:'辨識中…';
 const s=document.createElement('small');s.textContent=` YOLO: ${o.yolo_name} ${o.yolo_confidence}`;li.append(s);return li}))}catch(e){}}
-setInterval(refresh,1000);refresh();
 document.getElementById('ask').onsubmit=async e=>{e.preventDefault();const q=document.getElementById('q').value.trim();if(!q)return;
 const p=document.createElement('p');p.textContent='你：'+q;log.append(p);document.getElementById('q').value='';
 const a=document.createElement('p');a.textContent='…';log.append(a);log.scrollTop=log.scrollHeight;
@@ -85,6 +85,7 @@ const jpeg=await new Promise(done=>canvas.toBlob(done,'image/jpeg',0.85));
 try{await fetch('/api/frame',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:jpeg})}catch(e){stopCam('連不上伺服器');return}
 await new Promise(done=>setTimeout(done,Math.max(0,FRAME_MS-(performance.now()-t))))}}
 if(live){cam.hidden=false;camBtn.onclick=()=>stream?stopCam():startCam();camSel.onchange=()=>{stopCam();startCam(camSel.value)}}else view.src='/stream';
+setInterval(refresh,1000);refresh();
 </script></html>"""
 
 
@@ -97,8 +98,8 @@ def create_app(source: Source, chatter: Chatter, camera: Camera | None = None) -
 
     @app.get("/api/objects")
     def objects() -> dict:
-        _, seen, _ = source.snapshot()
-        return {"objects": [asdict(obj) for obj in seen], "error": getattr(source, "error", None)}
+        _, seen, jpeg = source.snapshot()
+        return {"objects": [asdict(obj) for obj in seen], "error": getattr(source, "error", None), "receiving": jpeg is not None}
 
     @app.get("/stream")
     async def stream() -> StreamingResponse:
