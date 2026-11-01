@@ -21,6 +21,7 @@ from .labeler import TrackLabeler
 log = logging.getLogger(__name__)
 
 FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+FIRST_FRAME_TIMEOUT_S = 5.0  # a camera can fail its first few reads
 
 
 @dataclass(frozen=True)
@@ -93,13 +94,17 @@ class Pipeline(threading.Thread):
     def _run(self) -> None:
         capture = open_source(self._source)
         interval = 1.0 / (capture.get(cv2.CAP_PROP_FPS) or 15.0)
+        opened = time.monotonic()
         try:
             while not self._stop.is_set():
                 started = time.perf_counter()
                 ok, frame_bgr = capture.read()
                 if not ok:
                     if self.frames == 0:
-                        raise RuntimeError(f"cannot read any frame from {self._source!r}; unsupported codec?")
+                        if time.monotonic() - opened > FIRST_FRAME_TIMEOUT_S:
+                            raise RuntimeError(f"cannot read any frame from {self._source!r}; unsupported codec?")
+                        time.sleep(0.05)
+                        continue
                     if not self._loop:
                         break
                     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)

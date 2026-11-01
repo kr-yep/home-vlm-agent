@@ -25,7 +25,7 @@ class Detector:
     # per-class NMS would keep one box for each. NMS-free models such as YOLO26 ignore it.
     # tracker: named on purpose. Ultralytics 8.4's default, TrackTrack, starts a track only
     # at about 0.7 confidence whatever `conf` says, so it hid half the boxes.
-    def __init__(self, weights: str, *, confidence: float = 0.3, imgsz: int = 960, device: str | int = 0, tracker: str = "botsort.yaml"):
+    def __init__(self, weights: str, *, confidence: float = 0.2, imgsz: int = 960, device: str | int = 0, tracker: str = "botsort.yaml"):
         from ultralytics import YOLO
 
         self._model = YOLO(weights)
