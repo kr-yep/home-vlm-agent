@@ -6,7 +6,7 @@ YOLO tracks boxes on every frame. Each track that lasts 15 frames is cropped and
 
 ## Run
 
-Needs Linux or WSL2 with Docker, Compose 2.30 or later, an NVIDIA GPU that containers can use, about 20 GB of VRAM, and about 30 GB of disk. Only the first setup needs the internet, and building from nothing took about 11 minutes here before the download. Weights and video are not in this repository; the script fetches the weights and checks their sha256.
+Needs Linux or WSL2 with Docker, Compose 2.30 or later, an NVIDIA GPU that containers can use, about 20 GB of VRAM, and about 50 GB of free disk (29 GB stays afterwards: 13 GB of images and 16 GB of weights; the rest is room for the build, a margin rather than a measurement). Only the first setup needs the internet, and building from nothing took about 11 minutes here before the download. Weights and video are not in this repository; the script fetches the weights and checks their sha256.
 
 ```bash
 ./scripts/setup.sh                    # once: build images, fetch weights, check the GPU

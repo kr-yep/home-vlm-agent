@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepare a machine that has Docker and an NVIDIA GPU: build the images, fetch the
 # weights with checksums, and build the detector. Safe to run again; finished files
-# are kept. Needs about 30 GB of disk and the internet, this once.
+# are kept. Needs about 50 GB of free disk and the internet, this once.
 #     ./scripts/setup.sh          then   docker compose up -d vlm app proxy
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,6 +18,7 @@ import torch
 assert torch.cuda.is_available(), "PyTorch cannot see the GPU"
 torch.ones(1, device="cuda").sum()
 print("GPU ok:", torch.cuda.get_device_name(0))'
+docker run --rm --gpus all --entrypoint llama-server home-vlm-llamacpp:b11869 --list-devices 2>&1 | grep "CUDA0:"
 
 GEMMA=https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf/resolve/d1c082be9cf3c8a514acf63b8761f4b41935842e
 ASSETS=https://github.com/ultralytics/assets/releases/download/v8.4.0
