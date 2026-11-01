@@ -39,17 +39,19 @@ PAGE = """<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
 body{font-family:system-ui,"Noto Sans TC",sans-serif;margin:16px;background:#111;color:#eee}
 main{display:grid;grid-template-columns:minmax(0,3fr) minmax(260px,1fr);gap:16px}
 @media(max-width:800px){main{grid-template-columns:1fr}}
-@media(min-width:801px){main>section:first-child{position:sticky;top:16px;align-self:start}}
+@media(min-width:801px){main>section:first-child{position:sticky;top:16px;align-self:start}
+#side{position:sticky;top:16px;align-self:start;height:calc(100vh - 32px);display:flex;flex-direction:column}#objects{flex:1;min-height:0;overflow-y:auto}}
+h3{margin:16px 0 8px}#side>h3:first-child{margin-top:0}
 img{width:100%;min-height:240px;border-radius:8px;background:#000}
 ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
-#log p{margin:.4em 0}form{display:flex;gap:8px}input{flex:1;padding:8px;font-size:1rem}
+#log{height:35vh;overflow-y:auto;margin-bottom:8px}#log p{margin:.4em 0}form{display:flex;gap:8px}input{flex:1;padding:8px;font-size:1rem}
 #cam{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}[hidden]{display:none!important}
 </style>
 <main><section><img id="view" alt="">
 <div id="cam" hidden><button id="camBtn">開鏡頭</button><select id="camSel" hidden></select><span id="camMsg"></span></div></section>
-<section><h3>看到的物品</h3><ul id="objects"></ul>
-<h3>問問看</h3><div id="log"></div>
-<form id="ask"><input id="q" placeholder="你看到什麼？" autocomplete="off"><button>送出</button></form></section></main>
+<section id="side"><h3>問問看</h3><div id="log"></div>
+<form id="ask"><input id="q" placeholder="你看到什麼？" autocomplete="off"><button>送出</button></form>
+<h3>看到的物品</h3><ul id="objects"></ul></section></main>
 <script>
 const objects=document.getElementById('objects'),log=document.getElementById('log');
 async function refresh(){try{const r=await fetch('/api/objects');const d=await r.json();
@@ -60,9 +62,9 @@ const s=document.createElement('small');s.textContent=` YOLO: ${o.yolo_name} ${o
 setInterval(refresh,1000);refresh();
 document.getElementById('ask').onsubmit=async e=>{e.preventDefault();const q=document.getElementById('q').value.trim();if(!q)return;
 const p=document.createElement('p');p.textContent='你：'+q;log.append(p);document.getElementById('q').value='';
-const a=document.createElement('p');a.textContent='…';log.append(a);
+const a=document.createElement('p');a.textContent='…';log.append(a);log.scrollTop=log.scrollHeight;
 try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
-const d=await r.json();a.textContent=r.ok?`助手：${d.answer}（${d.seconds}s）`:`錯誤：${d.detail||r.status}`}catch(err){a.textContent='錯誤：連不上伺服器'}};
+const d=await r.json();a.textContent=r.ok?`助手：${d.answer}（${d.seconds}s）`:`錯誤：${d.detail||r.status}`}catch(err){a.textContent='錯誤：連不上伺服器'}log.scrollTop=log.scrollHeight};
 const live=__LIVE__,view=document.getElementById('view'),cam=document.getElementById('cam'),camBtn=document.getElementById('camBtn'),camSel=document.getElementById('camSel'),camMsg=document.getElementById('camMsg');
 const video=document.createElement('video'),canvas=document.createElement('canvas');video.muted=true;video.playsInline=true;
 let stream=null;const FRAME_MS=66;
