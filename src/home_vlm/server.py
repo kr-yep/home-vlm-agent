@@ -39,6 +39,7 @@ PAGE = """<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
 body{font-family:system-ui,"Noto Sans TC",sans-serif;margin:16px;background:#111;color:#eee}
 main{display:grid;grid-template-columns:minmax(0,3fr) minmax(260px,1fr);gap:16px}
 @media(max-width:800px){main{grid-template-columns:1fr}}
+@media(min-width:801px){main>section:first-child{position:sticky;top:16px;align-self:start}}
 img{width:100%;min-height:240px;border-radius:8px;background:#000}
 ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
 #log p{margin:.4em 0}form{display:flex;gap:8px}input{flex:1;padding:8px;font-size:1rem}
