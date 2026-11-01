@@ -6,17 +6,20 @@ YOLO tracks boxes on every frame. Each track that lasts 15 frames is cropped and
 
 ## Run
 
-Everything runs in Docker inside WSL (Ubuntu-24.04, NVIDIA CDI). The model and app containers sit on an `internal` network with no route out; only `proxy` publishes `127.0.0.1:8700`.
+Needs Linux or WSL2 with Docker, Compose 2.30 or later, an NVIDIA GPU that containers can use, about 20 GB of VRAM, and about 30 GB of disk. Only the first setup needs the internet, and building from nothing took about 11 minutes here before the download. Weights and video are not in this repository; the script fetches the weights and checks their sha256.
 
 ```bash
-# in WSL, from this folder
-docker compose up -d vlm app proxy        # open http://127.0.0.1:8700
-docker run --rm --network none home-vlm-app pytest -q
+./scripts/setup.sh                    # once: build images, fetch weights, check the GPU
+docker compose up -d vlm app proxy    # wait for "Healthy", about a minute
 ```
 
-`HVA_SOURCE` picks the input: a camera index (`0`) or a video under `/media` (default `room-office.mp4`), for example `HVA_SOURCE=/media/my-room.mp4 docker compose up -d vlm app proxy`. A file loops, so a recording behaves like a camera. `bench/make_still_clip.py` turns a photo into a clip. AV1 video does not decode in this image; the page then shows the error. Camera passthrough into Docker on WSL is not set up or tested.
+Open `http://127.0.0.1:8700` in a browser on the same machine and press 開鏡頭. Browsers allow a camera only on localhost or HTTPS, so this exact address matters. Keep the tab in front (Chrome slows background tabs) and the camera still; boxes appear at once and names within about 5–15 s.
 
-Files in `/root/.cache/home-vlm` (WSL), not in Git:
+The model and app containers sit on an `internal` network with no route out; only `proxy` publishes `127.0.0.1:8700`. Stop with `docker compose stop`. Tests: `docker run --rm --network none home-vlm-app pytest -q`.
+
+`HVA_SOURCE` picks another input: a video under `/media` (it loops, so it behaves like a camera) or a camera index, for example `HVA_SOURCE=/media/my-room.mp4 docker compose up -d vlm app proxy`. `bench/make_still_clip.py` turns a photo into a clip. AV1 video does not decode in this image; the page then shows the error. A camera index needs the device passed into the container, which is not set up.
+
+Files under `$HVA_DATA` (default `~/.cache/home-vlm`, recorded in `.env`). `setup.sh` fetches the first two rows; the rest are only for `bench/`:
 
 | path | source |
 |---|---|
@@ -36,9 +39,11 @@ Files in `/root/.cache/home-vlm` (WSL), not in Git:
 
 YOLO → VLM works end to end in the real app and page (default stack, office clip, browser): all 10 boxes named, chat answers in about 0.8 s, 19.1 GB VRAM peak with YOLO. Neither the app nor the VLM container can reach the internet.
 
-It is good with a still camera and poor with a moving one. On still clips every box above the size limit had a name by the end of a 45 s run (median 7–17 s after it first appeared). On handheld or panning clips few boxes on screen have a name, because half the tracks die within about a second, before an answer can arrive. Not done: live camera, memory of objects across time, multiple cameras.
+Live camera: the page ran in Chromium with a fake camera device playing a still photo, from a data folder filled by `setup.sh`: 15 frames/s reached the app, first name at 4.6 s, all 13 by 13.1 s, chat about 1 s, camera off and on again worked. No physical camera, RTX 5090 or fresh machine has been tried yet.
 
-Known weak spots: the VLM is sometimes confidently wrong (microwave → 3D 列印機, pillow → 麵包); questions that need reasoning are unreliable ("what could I cook with?" answered "nothing" beside a fridge); now and then a chat answer repeats until the token limit.
+It is good with a still camera and poor with a moving one. On still clips every box above the size limit had a name by the end of a 45 s run (median 7–17 s after it first appeared). On handheld or panning clips few boxes on screen have a name, because half the tracks die within about a second, before an answer can arrive. Not done: memory of objects across time, multiple cameras.
+
+Known weak spots: if the camera turns to a new scene while it is on, a new object overlapping an old box can keep the old name until the tracker drops it (turning the camera off for more than 10 s clears this); the VLM is sometimes confidently wrong (microwave → 3D 列印機, pillow → 麵包); questions that need reasoning are unreliable ("what could I cook with?" answered "nothing" beside a fridge); now and then a chat answer repeats until the token limit.
 
 ### Which detector and VLM
 
@@ -97,4 +102,5 @@ The still clips are COCO photos looped, standing in for a camera on a tripod, an
 - **Boxes under 24 pixels a side** are not shown or named: the crop is too small to name, and they would stay "unnamed" for ever.
 - **Hint.** The detector's guess is passed with "it is often wrong". End to end it helps: 43.2% against 39.6% with Objects365 + 26B (p = 0.011).
 - **Supply chain.** Python deps resolve only releases at least 7 days old (`exclude-newer = "7 days"`) and are hash-locked in `uv.lock`. llama.cpp and the TabbyAPI source come from checksum-pinned tarballs; TabbyAPI's Python deps (comparison only) are bounded by date, not hash-locked, and torch and exllamav3 are direct URLs without hashes. Images are pinned by tag or digest and were built at least 7 days ago. Weights are checked by sha256.
-- **Licence.** Ultralytics YOLO is AGPL-3.0. Fine for coursework; anything distributed or served to others must follow AGPL or use a differently licensed detector.
+- **Camera through the browser.** The page captures frames and posts them to `/api/frame`, sending the next only after the last returns, and the app keeps only the newest. So no camera device has to pass into Docker, and a slow detector drops frames rather than falling behind. Frames travel only to `127.0.0.1`.
+- **Licence.** This repository is AGPL-3.0 because it uses Ultralytics YOLO, which is. The weights are not included and have their own terms.

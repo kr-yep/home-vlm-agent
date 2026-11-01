@@ -1,7 +1,7 @@
 """Frame loop: read a source, track boxes with YOLO, overlay VLM names.
 
-The source is a camera index or a video file. A file is replayed at its own
-frame rate and looped, so a recording behaves like a camera.
+The source is the browser's camera, a camera index or a video file. A file is
+replayed at its own frame rate and looped, so a recording behaves like a camera.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 import cv2
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .detect import Detection, Detector
@@ -22,6 +23,7 @@ log = logging.getLogger(__name__)
 
 FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 FIRST_FRAME_TIMEOUT_S = 5.0  # a camera can fail its first few reads
+BROWSER_IDLE_S = 3.0  # the page stopped sending: what we last saw is no longer on screen
 
 
 @dataclass(frozen=True)
@@ -46,7 +48,43 @@ def load_font(frame_width: int) -> ImageFont.ImageFont:
         return ImageFont.load_default(size)
 
 
-def open_source(source: str) -> cv2.VideoCapture:
+class BrowserCamera:
+    """Frames posted by the page, read like a video capture.
+
+    Only the newest frame is kept, so a slow detector never builds up a backlog.
+    read() waits for as long as nobody has the page open with the camera on.
+    """
+
+    def __init__(self) -> None:
+        self._new_frame = threading.Condition()
+        self._frame: np.ndarray | None = None
+
+    def put(self, jpeg: bytes) -> bool:
+        frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR) if jpeg else None
+        if frame is None:
+            return False
+        with self._new_frame:
+            self._frame = frame
+            self._new_frame.notify()
+        return True
+
+    def read(self) -> tuple[bool, np.ndarray]:
+        with self._new_frame:
+            while self._frame is None:
+                self._new_frame.wait()
+            frame, self._frame = self._frame, None
+        return True, frame
+
+    def get(self, _prop: int) -> float:
+        return 30.0
+
+    def release(self) -> None:
+        pass
+
+
+def open_source(source: str | BrowserCamera) -> cv2.VideoCapture | BrowserCamera:
+    if isinstance(source, BrowserCamera):
+        return source
     capture = cv2.VideoCapture(int(source) if source.isdigit() else source)
     if not capture.isOpened():
         raise RuntimeError(f"cannot open video source {source!r}")
@@ -68,7 +106,7 @@ def draw(frame: Image.Image, objects: list[SeenObject], font: ImageFont.ImageFon
 
 
 class Pipeline(threading.Thread):
-    def __init__(self, source: str, detector: Detector, labeler: TrackLabeler, *, loop: bool = True):
+    def __init__(self, source: str | BrowserCamera, detector: Detector, labeler: TrackLabeler, *, loop: bool = True):
         super().__init__(daemon=True, name="pipeline")
         self._source = source
         self._detector = detector
@@ -79,6 +117,7 @@ class Pipeline(threading.Thread):
         self._frame: Image.Image | None = None
         self._jpeg: bytes | None = None
         self._objects: list[SeenObject] = []
+        self._last_step = 0.0
         self.frames = 0
         self.yolo_ms = 0.0
         self.error: str | None = None  # set if the frame loop dies, so the API can say so
@@ -127,6 +166,7 @@ class Pipeline(threading.Thread):
         draw(frame, objects, self._font).save(buffer, format="JPEG", quality=80)
         with self._lock:
             self._frame, self._objects, self._jpeg = frame, objects, buffer.getvalue()
+            self._last_step = time.monotonic()
             self.frames += 1
         return objects
 
@@ -143,6 +183,8 @@ class Pipeline(threading.Thread):
 
     def snapshot(self) -> tuple[Image.Image | None, list[SeenObject], bytes | None]:
         with self._lock:
+            if isinstance(self._source, BrowserCamera) and time.monotonic() - self._last_step > BROWSER_IDLE_S:
+                return None, [], None
             return self._frame, list(self._objects), self._jpeg
 
     def stop(self) -> None:

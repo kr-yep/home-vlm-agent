@@ -7,7 +7,8 @@ import time
 from dataclasses import asdict
 from typing import Protocol
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -23,6 +24,10 @@ class Chatter(Protocol):
     def chat(self, question: str, scene: str, images: list[Image.Image] = ()) -> str: ...
 
 
+class Camera(Protocol):
+    def put(self, jpeg: bytes) -> bool: ...
+
+
 class Question(BaseModel):
     question: str = Field(min_length=1, max_length=500)
 
@@ -34,11 +39,13 @@ PAGE = """<!doctype html><html lang="zh-Hant"><meta charset="utf-8">
 body{font-family:system-ui,"Noto Sans TC",sans-serif;margin:16px;background:#111;color:#eee}
 main{display:grid;grid-template-columns:minmax(0,3fr) minmax(260px,1fr);gap:16px}
 @media(max-width:800px){main{grid-template-columns:1fr}}
-img{width:100%;border-radius:8px;background:#000}
+img{width:100%;min-height:240px;border-radius:8px;background:#000}
 ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
 #log p{margin:.4em 0}form{display:flex;gap:8px}input{flex:1;padding:8px;font-size:1rem}
+#cam{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}[hidden]{display:none!important}
 </style>
-<main><section><img src="/stream" alt="camera"></section>
+<main><section><img id="view" alt="">
+<div id="cam" hidden><button id="camBtn">開鏡頭</button><select id="camSel" hidden></select><span id="camMsg"></span></div></section>
 <section><h3>看到的物品</h3><ul id="objects"></ul>
 <h3>問問看</h3><div id="log"></div>
 <form id="ask"><input id="q" placeholder="你看到什麼？" autocomplete="off"><button>送出</button></form></section></main>
@@ -55,15 +62,35 @@ const p=document.createElement('p');p.textContent='你：'+q;log.append(p);docum
 const a=document.createElement('p');a.textContent='…';log.append(a);
 try{const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
 const d=await r.json();a.textContent=r.ok?`助手：${d.answer}（${d.seconds}s）`:`錯誤：${d.detail||r.status}`}catch(err){a.textContent='錯誤：連不上伺服器'}};
+const live=__LIVE__,view=document.getElementById('view'),cam=document.getElementById('cam'),camBtn=document.getElementById('camBtn'),camSel=document.getElementById('camSel'),camMsg=document.getElementById('camMsg');
+const video=document.createElement('video'),canvas=document.createElement('canvas');video.muted=true;video.playsInline=true;
+let stream=null;const FRAME_MS=66;
+function stopCam(text){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;view.removeAttribute('src');camBtn.textContent='開鏡頭';camMsg.textContent=text||''}
+async function startCam(deviceId){
+if(!navigator.mediaDevices){camMsg.textContent='瀏覽器不讓這個網址開鏡頭，請改用 http://127.0.0.1:8700';return}
+try{stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},...(deviceId?{deviceId:{exact:deviceId}}:{})}})}
+catch(e){camMsg.textContent=e.name==='NotFoundError'?'找不到鏡頭':e.name==='NotAllowedError'?'瀏覽器沒有允許使用鏡頭':'開不了鏡頭：'+e.message;return}
+camMsg.textContent='';camBtn.textContent='關鏡頭';video.srcObject=stream;await video.play();view.src='/stream';
+stream.getVideoTracks()[0].onended=()=>stopCam('鏡頭斷線了');
+const cams=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+const current=stream.getVideoTracks()[0].getSettings().deviceId;
+camSel.replaceChildren(...cams.map(d=>{const o=document.createElement('option');o.value=d.deviceId;o.textContent=d.label||'鏡頭';o.selected=d.deviceId===current;return o}));camSel.hidden=cams.length<2;
+sendFrames(stream)}
+async function sendFrames(mine){while(stream===mine){const t=performance.now();
+canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);
+const jpeg=await new Promise(done=>canvas.toBlob(done,'image/jpeg',0.85));
+try{await fetch('/api/frame',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:jpeg})}catch(e){stopCam('連不上伺服器');return}
+await new Promise(done=>setTimeout(done,Math.max(0,FRAME_MS-(performance.now()-t))))}}
+if(live){cam.hidden=false;camBtn.onclick=()=>stream?stopCam():startCam();camSel.onchange=()=>{stopCam();startCam(camSel.value)}}else view.src='/stream';
 </script></html>"""
 
 
-def create_app(source: Source, chatter: Chatter) -> FastAPI:
+def create_app(source: Source, chatter: Chatter, camera: Camera | None = None) -> FastAPI:
     app = FastAPI(title="home-vlm-agent")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return PAGE
+        return PAGE.replace("__LIVE__", "true" if camera else "false")
 
     @app.get("/api/objects")
     def objects() -> dict:
@@ -82,6 +109,12 @@ def create_app(source: Source, chatter: Chatter) -> FastAPI:
                 await asyncio.sleep(0.05)
 
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    if camera:
+        @app.post("/api/frame", status_code=204)
+        async def frame(request: Request) -> None:
+            if not await run_in_threadpool(camera.put, await request.body()):
+                raise HTTPException(400, "not a JPEG image")
 
     @app.post("/api/chat")
     def chat(body: Question) -> dict:

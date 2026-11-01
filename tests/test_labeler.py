@@ -111,6 +111,16 @@ def test_forgets_tracks_that_left_the_frame():
     assert labeler.label(1) is None
 
 
+def test_old_id_after_a_long_gap_does_not_keep_its_name():
+    vlm = FakeVLM()
+    labeler = TrackLabeler(vlm, min_frames=2, forget_after_s=5)
+    labeler.update(FRAME, [det(1)], now=0)
+    labeler.update(FRAME, [det(1)], now=0)
+    assert wait_for(lambda: labeler.label(1) is not None)
+    labeler.update(FRAME, [det(1)], now=6)
+    assert labeler.label(1) is None
+
+
 def test_crop_margin_stays_inside_the_frame():
     crop = crop_with_margin(FRAME, (0, 0, 100, 50))
     assert crop.size == (110, 55)

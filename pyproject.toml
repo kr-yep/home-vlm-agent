@@ -3,6 +3,7 @@ name = "home-vlm-agent"
 version = "0.1.0"
 description = "YOLO proposes boxes, a local vision-language model says what is in them."
 readme = "README.md"
+license = "AGPL-3.0-only"
 requires-python = ">=3.13"
 dependencies = [
   "ultralytics",

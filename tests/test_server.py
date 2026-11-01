@@ -1,7 +1,9 @@
+import io
+
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from home_vlm.pipeline import SeenObject
+from home_vlm.pipeline import BrowserCamera, SeenObject
 from home_vlm.server import create_app
 
 
@@ -62,3 +64,34 @@ def test_objects_reports_a_dead_frame_loop():
     source.error = "ModuleNotFoundError: No module named 'lap'"
     body = TestClient(create_app(source, FakeChatter())).get("/api/objects").json()
     assert body["error"].startswith("ModuleNotFoundError")
+
+
+
+def jpeg_bytes():
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 24), "red").save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def test_page_offers_the_camera_only_when_the_source_is_the_browser():
+    assert "const live=true" in TestClient(create_app(FakeSource([]), FakeChatter(), BrowserCamera())).get("/").text
+    assert "const live=false" in TestClient(create_app(FakeSource([]), FakeChatter())).get("/").text
+
+
+def test_posted_frame_reaches_the_camera():
+    camera = BrowserCamera()
+    client = TestClient(create_app(FakeSource([]), FakeChatter(), camera))
+    assert client.post("/api/frame", content=jpeg_bytes()).status_code == 204
+    ok, frame = camera.read()
+    assert ok and frame.shape == (24, 32, 3)
+
+
+def test_frame_that_is_not_an_image_is_refused():
+    client = TestClient(create_app(FakeSource([]), FakeChatter(), BrowserCamera()))
+    assert client.post("/api/frame", content=b"not a jpeg").status_code == 400
+    assert client.post("/api/frame", content=b"").status_code == 400
+
+
+def test_no_frame_endpoint_without_a_browser_camera():
+    client = TestClient(create_app(FakeSource([]), FakeChatter()))
+    assert client.post("/api/frame", content=jpeg_bytes()).status_code in (404, 405)

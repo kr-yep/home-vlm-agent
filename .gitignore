@@ -6,6 +6,10 @@ __pycache__/
 models/
 media/
 runs/
+# Written by scripts/setup.sh.
+.env
+# Local working notes with this machine's paths.
+AGENTS.md
 *.pt
 *.gguf
 *.mp4

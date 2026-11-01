@@ -10,14 +10,14 @@ import uvicorn
 
 from .detect import Detector
 from .labeler import TrackLabeler
-from .pipeline import Pipeline
+from .pipeline import BrowserCamera, Pipeline
 from .server import create_app
 from .vlm import VLMClient
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="home_vlm")
-    parser.add_argument("--source", default=os.environ.get("HVA_SOURCE", "0"), help="camera index or video file")
+    parser.add_argument("--source", default=os.environ.get("HVA_SOURCE", "browser"), help="browser (the page's camera), a camera index or a video file")
     parser.add_argument("--vlm-url", default=os.environ.get("HVA_VLM_URL", "http://vlm:8000"))
     parser.add_argument("--vlm-model", default=os.environ.get("HVA_VLM_MODEL", "gemma-4-26b-a4b"))
     parser.add_argument("--yolo", default=os.environ.get("HVA_YOLO", "/models/yoloe-26l-o365.pt"))
@@ -30,10 +30,11 @@ def main() -> None:
 
     vlm = VLMClient(args.vlm_url, args.vlm_model)
     labeler = TrackLabeler(vlm, workers=args.workers, max_pending=args.workers)
-    pipeline = Pipeline(args.source, Detector(args.yolo, confidence=args.confidence), labeler)
+    camera = BrowserCamera() if args.source == "browser" else None
+    pipeline = Pipeline(camera or args.source, Detector(args.yolo, confidence=args.confidence), labeler)
     pipeline.start()
     try:
-        uvicorn.run(create_app(pipeline, vlm), host=args.host, port=args.port, log_level="warning")
+        uvicorn.run(create_app(pipeline, vlm, camera), host=args.host, port=args.port, log_level="warning")
     finally:
         pipeline.stop()
         labeler.close()

@@ -101,6 +101,9 @@ class TrackLabeler:
     def update(self, frame: Image.Image, detections: list[Detection], now: float | None = None) -> None:
         now = time.monotonic() if now is None else now
         with self._lock:
+            # Before matching: after a gap the tracker can hand an old id to a new object.
+            for track_id in [t for t, track in self._tracks.items() if now - track.last_seen > self._forget_after_s]:
+                del self._tracks[track_id]
             for detection in sorted(detections, key=self._priority, reverse=True):
                 if detection.track_id is None:
                     continue
@@ -115,8 +118,6 @@ class TrackLabeler:
                     crop = crop_with_margin(frame, detection.box)
                     track.pending = self._pool.submit(self._describer.describe, crop, detection.yolo_name)
                     track.pending.add_done_callback(lambda future, tid=detection.track_id: self._finish(tid, future))
-            for track_id in [t for t, track in self._tracks.items() if now - track.last_seen > self._forget_after_s]:
-                del self._tracks[track_id]
 
     def _priority(self, detection: Detection) -> tuple[int, int]:
         """Old tracks first: on a moving camera half the tracks die within a second, before any answer could arrive."""
