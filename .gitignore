@@ -6,7 +6,7 @@ __pycache__/
 models/
 media/
 runs/
-# Written by scripts/setup.sh.
+# Written by start.sh.
 .env
 # Local working notes with this machine's paths.
 AGENTS.md

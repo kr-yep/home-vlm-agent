@@ -6,20 +6,19 @@ YOLO tracks boxes on every frame. Each track that lasts 15 frames is cropped and
 
 ## Run
 
-Needs Linux or WSL2 with Docker, Compose 2.30 or later, an NVIDIA GPU that containers can use, about 20 GB of VRAM, and about 50 GB of free disk (29 GB stays afterwards: 13 GB of images and 16 GB of weights; the rest is room for the build, a margin rather than a measurement). Only the first setup needs the internet, and building from nothing took about 11 minutes here before the download. Weights and video are not in this repository; the script fetches the weights and checks their sha256.
-
 ```bash
-./scripts/setup.sh                    # once: build images, fetch weights, check the GPU
-docker compose up -d vlm app proxy    # wait for "Healthy", about a minute
+git clone https://github.com/kr-yep/home-vlm-agent.git && cd home-vlm-agent && ./start.sh
 ```
 
-Open `http://127.0.0.1:8700` in a browser on the same machine and press 開鏡頭. Browsers allow a camera only on localhost or HTTPS, so this exact address matters. Keep the tab in front (Chrome slows background tabs) and the camera still; boxes appear at once and names within about 5–15 s.
+That is all, on Linux or WSL2 with Docker, Compose 2.30 or later and an NVIDIA GPU that containers can use, about 20 GB of VRAM. The first run builds the images and fetches the weights, which needs the internet and about 50 GB of free disk (29 GB stays afterwards: 13 GB of images and 16 GB of weights; the rest is room for the build, a margin rather than a measurement). Later runs only start the app: run `./start.sh` again. Copying a finished `models/` folder to `$HVA_DATA/models/` beforehand skips the download, since files with the right sha256 are kept. Weights and video are not in this repository.
 
-The model and app containers sit on an `internal` network with no route out; only `proxy` publishes `127.0.0.1:8700`. Stop with `docker compose stop`. Tests: `docker run --rm --network none home-vlm-app pytest -q`.
+It opens `http://127.0.0.1:8700`; press 開鏡頭 and allow the camera. Browsers allow a camera only on localhost or HTTPS, so this exact address matters. Keep the tab in front (Chrome slows background tabs) and the camera still; boxes appear at once and names within about 5–15 s.
+
+The model and app containers sit on an `internal` network with no route out; only `proxy` publishes `127.0.0.1:8700`. Stop with `docker compose stop`. After `git pull`, run `docker compose build vlm app`. Tests: `docker run --rm --network none home-vlm-app pytest -q`.
 
 `HVA_SOURCE` picks another input: a video under `/media` (it loops, so it behaves like a camera) or a camera index, for example `HVA_SOURCE=/media/my-room.mp4 docker compose up -d vlm app proxy`. `bench/make_still_clip.py` turns a photo into a clip. AV1 video does not decode in this image; the page then shows the error. A camera index needs the device passed into the container, which is not set up.
 
-Files under `$HVA_DATA` (default `~/.cache/home-vlm`, recorded in `.env`). `setup.sh` fetches the first two rows; the rest are only for `bench/`:
+Files under `$HVA_DATA` (default `~/.cache/home-vlm`, recorded in `.env`). `start.sh` fetches the first two rows; the rest are only for `bench/`:
 
 | path | source |
 |---|---|
@@ -39,7 +38,7 @@ Files under `$HVA_DATA` (default `~/.cache/home-vlm`, recorded in `.env`). `setu
 
 YOLO → VLM works end to end in the real app and page (default stack, office clip, browser): all 10 boxes named, chat answers in about 0.8 s, 19.1 GB VRAM peak with YOLO. Neither the app nor the VLM container can reach the internet.
 
-Live camera: the page ran in Chromium with a fake camera device playing a still photo, from a data folder filled by `setup.sh`: 15 frames/s reached the app, first name at 4.6 s, all 13 by 13.1 s, chat about 1 s, camera off and on again worked. No physical camera, RTX 5090 or fresh machine has been tried yet.
+Live camera: the page ran in Chromium with a fake camera device playing a still photo, from a data folder filled by `start.sh`: 15 frames/s reached the app, first name at 4.6 s, all 13 by 13.1 s, chat about 1 s, camera off and on again worked. No physical camera, RTX 5090 or fresh machine has been tried yet.
 
 It is good with a still camera and poor with a moving one. On still clips every box above the size limit had a name by the end of a 45 s run (median 7–17 s after it first appeared). On handheld or panning clips few boxes on screen have a name, because half the tracks die within about a second, before an answer can arrive. Not done: memory of objects across time, multiple cameras.
 
