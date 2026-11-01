@@ -16,7 +16,7 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 
 from .detect import Detection, Detector
-from .labeler import TrackLabeler, crop_with_margin
+from .labeler import TrackLabeler
 
 log = logging.getLogger(__name__)
 
@@ -33,9 +33,16 @@ class SeenObject:
     detail: str | None
 
     def describe(self) -> str:
-        if self.name:
-            return f"- {self.name}（{self.detail or '無描述'}；偵測器猜 {self.yolo_name}）"
-        return f"- 尚未辨識（偵測器猜 {self.yolo_name}）"
+        return f"- {self.name}（{self.detail or '無描述'}）"
+
+
+def load_font(frame_width: int) -> ImageFont.ImageFont:
+    size = max(12, frame_width // 45)
+    try:
+        return ImageFont.truetype(FONT_PATH, size)
+    except OSError:
+        log.warning("CJK font missing at %s; labels will not render Chinese", FONT_PATH)
+        return ImageFont.load_default(size)
 
 
 def open_source(source: str) -> cv2.VideoCapture:
@@ -52,7 +59,7 @@ def draw(frame: Image.Image, objects: list[SeenObject], font: ImageFont.ImageFon
         named = obj.name is not None
         colour = (40, 200, 120) if named else (240, 180, 40)
         pen.rectangle(obj.box, outline=colour, width=3)
-        text = f"{obj.name} ({obj.yolo_name})" if named else f"? {obj.yolo_name}"
+        text = obj.name if named else f"? {obj.yolo_name}"
         x, y = obj.box[0], max(0, obj.box[1] - font.size - 6)
         pen.rectangle(pen.textbbox((x, y), text, font=font, stroke_width=0), fill=(0, 0, 0))
         pen.text((x, y), text, font=font, fill=colour)
@@ -74,11 +81,7 @@ class Pipeline(threading.Thread):
         self.frames = 0
         self.yolo_ms = 0.0
         self.error: str | None = None  # set if the frame loop dies, so the API can say so
-        try:
-            self._font = ImageFont.truetype(FONT_PATH, 22)
-        except OSError:
-            log.warning("CJK font missing at %s; labels will not render Chinese", FONT_PATH)
-            self._font = ImageFont.load_default(22)
+        self._font: ImageFont.ImageFont | None = None
 
     def run(self) -> None:
         try:
@@ -95,6 +98,8 @@ class Pipeline(threading.Thread):
                 started = time.perf_counter()
                 ok, frame_bgr = capture.read()
                 if not ok:
+                    if self.frames == 0:
+                        raise RuntimeError(f"cannot read any frame from {self._source!r}; unsupported codec?")
                     if not self._loop:
                         break
                     capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -106,11 +111,13 @@ class Pipeline(threading.Thread):
 
     def step(self, frame_bgr) -> list[SeenObject]:
         started = time.perf_counter()
-        detections = self._detector.track(frame_bgr)
+        # A box too small to name would stay "unnamed" for ever, on screen and in chat.
+        detections = [d for d in self._detector.track(frame_bgr) if self._labeler.can_name(d)]
         self.yolo_ms = (time.perf_counter() - started) * 1000
         frame = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
         self._labeler.update(frame, detections)
         objects = [self._seen(detection) for detection in detections]
+        self._font = self._font or load_font(frame.width)
         buffer = io.BytesIO()
         draw(frame, objects, self._font).save(buffer, format="JPEG", quality=80)
         with self._lock:
@@ -132,13 +139,6 @@ class Pipeline(threading.Thread):
     def snapshot(self) -> tuple[Image.Image | None, list[SeenObject], bytes | None]:
         with self._lock:
             return self._frame, list(self._objects), self._jpeg
-
-    def largest_crop(self) -> Image.Image | None:
-        frame, objects, _ = self.snapshot()
-        if frame is None or not objects:
-            return None
-        biggest = max(objects, key=lambda o: (o.box[2] - o.box[0]) * (o.box[3] - o.box[1]))
-        return crop_with_margin(frame, biggest.box)
 
     def stop(self) -> None:
         self._stop.set()

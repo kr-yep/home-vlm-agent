@@ -31,7 +31,7 @@ DESCRIBE_USER = "這個框裡主要的物體是什麼？" + DESCRIBE_JSON
 DESCRIBE_USER_MARKED = "圖中紅色框起來的那個物體是什麼？只回答紅框框住的那一個，不是它上面、旁邊或背景的東西。" + DESCRIBE_JSON
 CHAT_SYSTEM = (
     "你是住家裡的物品助手，用自然的台灣繁體中文簡短回答。"
-    "你只知道下面列出的「目前畫面中的物品」和附上的圖片；沒列出的東西就說沒看到，不要猜。"
+    "你看得到附上的畫面，下面也列出已辨識的物品；兩邊都沒有的東西就說沒看到，不要猜。問到用途時，依物品的常見用途回答。"
 )
 
 # Crops are tiny next to a full frame; scaling them up a little helps the vision

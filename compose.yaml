@@ -1,6 +1,6 @@
 # Run from WSL:  docker compose up -d vlm app proxy   → http://127.0.0.1:8700
 # Weights and media come from /root/.cache/home-vlm (see README).
-# `--profile bench` adds llama.cpp, Ollama, SGLang, mistral.rs and TabbyAPI, kept for the runtime comparison.
+# `--profile bench` adds vLLM, llama.cpp with the 12B, Ollama, SGLang, mistral.rs and TabbyAPI, kept for the comparisons.
 name: home-vlm
 
 networks:
@@ -12,11 +12,44 @@ x-gpu: &gpu
   devices: ["nvidia.com/gpu=all"]
 
 services:
-  # vLLM with Google's QAT int4 (w4a16) weights, the HF-format sibling of the GGUF.
+  # Gemma 4 26B-A4B QAT q4_0 on llama.cpp: the best detector x VLM pair measured (see README).
+  vlm:
+    build: {context: docker, dockerfile: llamacpp.Dockerfile}
+    image: home-vlm-llamacpp:b11869
+    <<: *gpu
+    networks: [internal]
+    volumes: ["/root/.cache/home-vlm/models:/models:ro"]
+    command:
+      - -m
+      - /models/gemma-4-26B_q4_0-it.gguf
+      - --mmproj
+      - /models/gemma-4-26B-it-mmproj.gguf
+      - --alias
+      - gemma-4-26b-a4b
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --n-gpu-layers
+      - "99"
+      - --ctx-size
+      - "16384"    # 4096 per slot; a label or chat turn stays well under it
+      - --parallel
+      - "4"        # keeps chat responsive while tracks are being named
+      - --jinja
+      - --reasoning-budget
+      - "0"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "localhost:8000/health"]
+      interval: 3s
+      retries: 60
+
+  # vLLM with Google's QAT int4 (w4a16) weights of the 12B, the earlier default.
   # Image: upstream vllm/vllm-openai v0.32.0 (built 2026-10-18), already on this machine
   # as the clean image the Qwen sandbox verified; this service only reads it.
-  vlm:
+  vllm:
     image: local/qwen-vllm-clean:v0.32.0
+    profiles: [bench]
     <<: *gpu
     networks: [internal]
     environment: {HF_HUB_OFFLINE: "1", VLLM_NO_USAGE_STATS: "1", DO_NOT_TRACK: "1"}
@@ -141,11 +174,14 @@ services:
     image: home-vlm-app
     <<: *gpu
     networks: [internal]
-    depends_on: [vlm]
+    depends_on: {vlm: {condition: service_healthy}}
     environment:
-      HVA_SOURCE: ${HVA_SOURCE:-/media/kitchen-hotel.webm}
+      HVA_SOURCE: ${HVA_SOURCE:-/media/room-office.mp4}
       HVA_VLM_URL: http://vlm:8000
-      HVA_YOLO: /models/yolo.pt
+      HVA_VLM_MODEL: gemma-4-26b-a4b
+      HVA_YOLO: ${HVA_YOLO:-/models/yoloe-26l-o365.pt}
+      HVA_CONF: ${HVA_CONF:-0.3}
+      HVA_VLM_WORKERS: ${HVA_VLM_WORKERS:-3}
     volumes:
       - "/root/.cache/home-vlm/models:/models:ro"
       - "/root/.cache/home-vlm/media:/media:ro"

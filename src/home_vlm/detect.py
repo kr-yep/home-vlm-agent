@@ -21,20 +21,27 @@ class Detection:
 
 
 class Detector:
-    def __init__(self, weights: str, *, confidence: float = 0.2, imgsz: int = 960, device: str | int = 0):
+    # agnostic_nms: an open-vocabulary model has thousands of near-synonym classes, and
+    # per-class NMS would keep one box for each. NMS-free models such as YOLO26 ignore it.
+    # tracker: named on purpose. Ultralytics 8.4's default, TrackTrack, starts a track only
+    # at about 0.7 confidence whatever `conf` says, so it hid half the boxes.
+    def __init__(self, weights: str, *, confidence: float = 0.3, imgsz: int = 960, device: str | int = 0, tracker: str = "botsort.yaml"):
         from ultralytics import YOLO
 
         self._model = YOLO(weights)
         self._confidence = confidence
         self._imgsz = imgsz
         self._device = device
+        self._tracker = tracker
 
     def track(self, frame_bgr: np.ndarray) -> list[Detection]:
         result = self._model.track(
             frame_bgr,
             persist=True,
+            tracker=self._tracker,
             conf=self._confidence,
             imgsz=self._imgsz,
+            agnostic_nms=True,
             device=self._device,
             verbose=False,
         )[0]
@@ -43,7 +50,9 @@ class Detector:
     def detect(self, image) -> list[Detection]:
         """Same settings as `track`, for unrelated still images (no track ids)."""
 
-        result = self._model.predict(image, conf=self._confidence, imgsz=self._imgsz, device=self._device, verbose=False)[0]
+        result = self._model.predict(
+            image, conf=self._confidence, imgsz=self._imgsz, agnostic_nms=True, device=self._device, verbose=False
+        )[0]
         return self._detections(result)
 
     @staticmethod

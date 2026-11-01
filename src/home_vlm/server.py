@@ -17,7 +17,6 @@ from .pipeline import SeenObject
 
 class Source(Protocol):
     def snapshot(self) -> tuple[Image.Image | None, list[SeenObject], bytes | None]: ...
-    def largest_crop(self) -> Image.Image | None: ...
 
 
 class Chatter(Protocol):
@@ -46,6 +45,7 @@ ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
 <script>
 const objects=document.getElementById('objects'),log=document.getElementById('log');
 async function refresh(){try{const r=await fetch('/api/objects');const d=await r.json();
+if(d.error){objects.textContent='影像來源有問題：'+d.error;return}
 objects.replaceChildren(...d.objects.map(o=>{const li=document.createElement('li');
 li.textContent=o.name?`${o.name}：${o.detail||''}`:'辨識中…';
 const s=document.createElement('small');s.textContent=` YOLO: ${o.yolo_name} ${o.yolo_confidence}`;li.append(s);return li}))}catch(e){}}
@@ -85,11 +85,12 @@ def create_app(source: Source, chatter: Chatter) -> FastAPI:
 
     @app.post("/api/chat")
     def chat(body: Question) -> dict:
-        _, seen, _ = source.snapshot()
-        scene = "\n".join(obj.describe() for obj in seen) or "（畫面中沒有偵測到物品）"
-        crop = source.largest_crop()
+        frame, seen, _ = source.snapshot()
+        named = [obj.describe() for obj in seen if obj.name]
+        waiting = len(seen) - len(named)
+        scene = "\n".join(named + ([f"（另有 {waiting} 個物體還沒辨識）"] if waiting else [])) or "（畫面中沒有偵測到物品）"
         started = time.perf_counter()
-        answer = chatter.chat(body.question, scene, [crop] if crop is not None else [])
+        answer = chatter.chat(body.question, scene, [frame] if frame is not None else [])
         return {"answer": answer, "seconds": round(time.perf_counter() - started, 2), "scene": scene}
 
     return app

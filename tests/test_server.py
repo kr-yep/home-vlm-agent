@@ -12,9 +12,6 @@ class FakeSource:
     def snapshot(self):
         return Image.new("RGB", (64, 64)), self.objects, b"jpeg"
 
-    def largest_crop(self):
-        return Image.new("RGB", (32, 32)) if self.objects else None
-
 
 class FakeChatter:
     def __init__(self):
@@ -26,6 +23,7 @@ class FakeChatter:
 
 
 MUG = SeenObject(track_id=1, yolo_name="cup", yolo_confidence=0.31, box=(1, 2, 30, 40), name="馬克杯", detail="白色")
+UNNAMED = SeenObject(track_id=2, yolo_name="hindu temple", yolo_confidence=0.9, box=(1, 2, 30, 40), name=None, detail=None)
 
 
 def test_objects_lists_vlm_names_with_yolo_hint():
@@ -35,23 +33,23 @@ def test_objects_lists_vlm_names_with_yolo_hint():
     assert body["objects"][0]["yolo_name"] == "cup"
 
 
-def test_chat_passes_scene_text_and_one_crop_to_the_model():
+def test_chat_passes_named_objects_and_the_frame_to_the_model():
     chatter = FakeChatter()
-    client = TestClient(create_app(FakeSource([MUG]), chatter))
+    client = TestClient(create_app(FakeSource([MUG, UNNAMED]), chatter))
     response = client.post("/api/chat", json={"question": "你看到什麼？"})
     assert response.status_code == 200
     assert response.json()["answer"] == "我看到一個馬克杯。"
     question, scene, images = chatter.seen
-    assert "馬克杯" in scene and "cup" in scene
+    assert "馬克杯" in scene and "1 個物體還沒辨識" in scene and "hindu temple" not in scene
     assert images == 1
 
 
-def test_chat_with_empty_scene_sends_no_image():
+def test_chat_with_nothing_detected_still_sends_the_frame():
     chatter = FakeChatter()
     client = TestClient(create_app(FakeSource([]), chatter))
     client.post("/api/chat", json={"question": "有東西嗎"})
     assert chatter.seen[1] == "（畫面中沒有偵測到物品）"
-    assert chatter.seen[2] == 0
+    assert chatter.seen[2] == 1
 
 
 def test_chat_rejects_empty_question():

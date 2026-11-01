@@ -2,7 +2,7 @@
 
 YOLO finds boxes; a local vision-language model (VLM) names what is in them and answers questions about the scene.
 
-YOLO tracks boxes on every frame (low confidence threshold). Each track that lasts 3 frames is cropped and sent to the VLM once, with YOLO's guess as a hint. The page and `/api/objects` show both names. Chat questions go to the same VLM with the current object list and the largest crop.
+YOLO tracks boxes on every frame. Each track that lasts 15 frames is cropped and sent to the VLM once, oldest track first, with YOLO's guess as a hint. The picture shows the VLM's name; the list beside it and `/api/objects` show both. Chat questions go to the same VLM with the whole frame and the objects named so far.
 
 ## Run
 
@@ -14,41 +14,68 @@ docker compose up -d vlm app proxy        # open http://127.0.0.1:8700
 docker run --rm --network none home-vlm-app pytest -q
 ```
 
-`HVA_SOURCE` picks the input: a camera index (`0`) or a video under `/media` (default `kitchen-hotel.webm`). Camera passthrough into Docker on WSL is not set up or tested.
+`HVA_SOURCE` picks the input: a camera index (`0`) or a video under `/media` (default `room-office.mp4`), for example `HVA_SOURCE=/media/my-room.mp4 docker compose up -d vlm app proxy`. A file loops, so a recording behaves like a camera. `bench/make_still_clip.py` turns a photo into a clip. AV1 video does not decode in this image; the page then shows the error. Camera passthrough into Docker on WSL is not set up or tested.
 
 Files in `/root/.cache/home-vlm` (WSL), not in Git:
 
 | path | source |
 |---|---|
-| `models/gemma-4-12b-it-qat-w4a16-ct/` | `google/gemma-4-12B-it-qat-w4a16-ct` @ `1d2c2d7` (vLLM, default) |
+| `models/gemma-4-26B_q4_0-it.gguf`, `models/gemma-4-26B-it-mmproj.gguf` | `google/gemma-4-26B-A4B-it-qat-q4_0-gguf` @ `d1c082b` (llama.cpp, default) |
+| `models/yoloe-26l-o365.pt` | `yoloe-26l-seg.pt` with the Objects365 names built in (`bench/make_prompted_detector.py`, the one step that uses the internet, in a throwaway container with no credentials; default detector) |
+| `models/yoloe-26l-seg-pf.pt`, `models/yoloe-26l-lvis.pt` | YOLOE prompt-free, and with the LVIS names built in (comparison only) |
+| `models/gemma-4-12b-it-qat-w4a16-ct/` | `google/gemma-4-12B-it-qat-w4a16-ct` @ `1d2c2d7` (vLLM, comparison only) |
 | `models/gemma-4-12b-it-qat-q4_0.gguf`, `models/mmproj-…gguf` | `google/gemma-4-12B-it-qat-q4_0-gguf` @ `29d0977` (llama.cpp, Ollama, mistral.rs) |
 | `models/gemma-4-12b-it-exl3-4.0bpw/` | `turboderp/gemma-4-12B-it-exl3` @ `0c0ce0e` (ExLlamaV3, comparison only) |
 | `models/sglang-config.json` | the w4a16 `config.json` plus `audio_config.output_proj_dims = 640` (SGLang, comparison only) |
 | `models/yolo.pt` → `yolo26m.pt` | ultralytics/assets v8.4.0, sha256 `401cea9a…d0b7` |
-| `media/` | Wikimedia Commons clips; licences in `media/SOURCES.txt` |
+| `media/` | test clips; sources and licences in `media/SOURCES.txt` |
 | `data/lvis-eval/` | 500 objects from LVIS v1 val (`python -m bench.prepare_lvis`) |
 | `runs/` | benchmark and evaluation outputs |
 
 ## Status (2026-11-01)
 
-Works end to end on a recorded kitchen video: YOLO tracks, the VLM names tracks in about 1.5 s (median, first seen → named), chat answers in 0.2–0.8 s, 13.9 GB VRAM peak with YOLO. The containers resolve no outside hosts. Not done: live camera, memory of objects across time, multiple cameras.
+YOLO → VLM works end to end in the real app and page (default stack, office clip, browser): all 10 boxes named, chat answers in about 0.8 s, 19.1 GB VRAM peak with YOLO. Neither the app nor the VLM container can reach the internet.
 
-Recognition on 500 indoor LVIS objects (`bench/recognition_eval.py`, `bench/score.py`, `bench/fusion.py`; Gemma 4 12B QAT on llama.cpp unless noted):
+It is good with a still camera and poor with a moving one. On still clips every box above the size limit is named within about 20 s. On handheld or panning clips few boxes on screen have a name, because half the tracks die within about a second, before an answer can arrive. Not done: live camera, memory of objects across time, multiple cameras.
 
-| | COCO classes (250) | other household objects (250) |
-|---|---|---|
-| YOLO finds a box (IoU ≥ 0.5) | 74% | 15% |
-| YOLO's name right, on its boxes | 93.5% | 8% |
-| VLM's name right, on YOLO's boxes, with hint (COCO-level yardstick) | 77% (vLLM 73%) | 35% (vLLM 30%) |
-| VLM's name right, given the true box (WordNet lenient) | 49% (vLLM 55%) | 42% (vLLM 44%) |
+Known weak spots: the VLM is sometimes confidently wrong (microwave → 3D 列印機, pillow → 麵包); questions that need reasoning are unreliable ("what could I cook with?" answered "nothing" beside a fridge); now and then a chat answer repeats until the token limit.
 
-A hand check of 80 automatic misses found 16 where the answer was in fact right, 17 where the VLM named another object in the crop (the cat on the bed), 37 plain misrecognitions and 10 unclear; the corrected rates are roughly 5–8 points higher. Showing the box in red on a wider view did not help (44.6% vs 45.2% on true boxes).
+### Which detector and VLM
 
-What this means: on the 80 COCO classes YOLO's own name is already better than the VLM's. The VLM adds names for things outside COCO and descriptions (colour, material, what is in the pan), but YOLO only boxes 15% of those objects, so the proposer, not the namer, is the limit.
+500 indoor LVIS objects, one run each. End to end: the detector boxed the object (IoU ≥ 0.5) and the name is right (WordNet lenient), with missed objects counted as wrong. `bench/recognition_eval.py`, `bench/score.py`, `bench/cross.py`; boxes alone in `bench/proposers.py`. Both VLMs on llama.cpp b11869. YOLOE-26l is used throughout.
+
+| detector, threshold 0.2 | boxed | boxes per image | detector's own name | + Gemma 12B | + Gemma 26B |
+|---|---|---|---|---|---|
+| YOLO26m (COCO 80) | 44.4% | 9.5 | 35.2% | 27.6% | 29.6% |
+| YOLOE, Objects365 names | 72.4% | 22.5 | 40.4% | 40.2% | 43.2% |
+| YOLOE, prompt-free (4585 tags) | 84.4% | 32.1 | 41.2% | 46.0% | 49.0% |
+| YOLOE, LVIS names | 81.2% | 23.5 | 36.6% | not run | 50.6% |
+
+- The detector matters most. YOLO26m against any YOLOE row: p < 1e-8 (paired sign test). Its weakness is outside COCO: 4–5% end to end on the 250 other objects, against 32–46%. On COCO classes its own name, 69%, is still the best number here, measured with a favourable hand-made name map.
+- 26B beats 12B on the true box (53.6% vs 45.2%, p = 6.6e-5). End to end the gap is 2–3 points and not significant (p = 0.10–0.15), and it is faster (median 0.55 s vs 0.9–1.0 s).
+- Prompt-free against Objects365 with 26B: p = 0.0006. Prompt-free against LVIS names: p = 0.28. The LVIS row is flattered because its vocabulary is the test's.
+- These do not measure wrong boxes: LVIS labels are incomplete, so a box with no label is not necessarily wrong. That only shows on real footage, below.
+- Raising the threshold (read from the same run, approximately): Objects365 + 26B gives 39.8% at 0.3 and 34.8% at 0.5; prompt-free gives 47.6% and 42.4%.
+
+Real clips through the whole app with 26B, 45 s, one run each, boxes named / boxes on screen in the last 10 s:
+
+| detector, threshold | office | bedroom | kitchen | panning bedroom | handheld kitchen |
+|---|---|---|---|---|---|
+| **YOLOE Objects365, 0.3** | 10 / 10 | 18 / 18 | 17.9 / 17.9 | 1.6 / 10.2 | 0.2 / 3.6 |
+| YOLOE Objects365, 0.5 | 8.9 / 8.9 | 17.9 / 17.9 | 14 / 14 | 0.5 / 7.5 | 0 / 1.7 |
+| YOLOE LVIS names, 0.3 | 7.9 / 8 | 19.8 / 19.8 | 15.8 / 15.8 | 1.8 / 12.2 | 0.3 / 5.2 |
+| YOLOE prompt-free, 0.3 | 13 / 13.1 | 22.9 / 22.9 | 18.9 / 18.9 | 1.6 / 15.9 | 0.9 / 13.1 |
+| YOLOE prompt-free, 0.5 | 10 / 10 | 20.8 / 20.8 | 15.6 / 15.6 | 2.6 / 11.9 | 2.0 / 6.4 |
+| YOLO26m, 0.2 | 8.9 / 8.9 | 4 / 4 | 6.8 / 6.8 | 0.9 / 3.6 | 0.3 / 1.7 |
+
+The still clips are COCO photos looped, standing in for a camera on a tripod, and they are also in the 500-object test.
 
 ## Decisions
 
-- **Runtime: vLLM 0.32.0** with Google's w4a16 QAT weights. Same 30 crops, YOLO running, one runtime on the GPU at a time, fresh server each (`bench/runtime_bench.py`); recognition on the 500 objects above (`bench/recognition_eval.py`). VRAM includes YOLO and about 1.1 GB the Windows desktop holds.
+- **Stack: YOLOE-26l with Objects365 names at 0.3, BoT-SORT, Gemma 4 26B on llama.cpp.** Prompt-free scores higher on LVIS, but on real footage it draws large boxes over walls and ceilings and proposes scene words ("veterinarians office", "biology laboratory"). The VLM then names those boxes (a wall as 電腦螢幕), which also misleads chat. Objects365 keeps to objects; the cost is real and measured, about 8 points at this threshold. To switch: `HVA_YOLO=/models/yoloe-26l-seg-pf.pt HVA_CONF=0.5`. Compared by eye on saved frames, not by a score. Thresholds were chosen on these same clips, so the table above is not an independent test.
+- **Tracker: named explicitly.** Ultralytics 8.4's default, TrackTrack, starts a track only at 0.7 confidence whatever `conf` says (kitchen clip: 16 boxes against 35 with BoT-SORT at the same 0.2; YOLO26m 3 against 14).
+- **Runtime: llama.cpp for the 26B.** No w4a16 weights exist for it, so vLLM cannot run it. At 15 fps with YOLO: label 0.87 s median, chat 0.42 s, against 1.07 s and 0.39 s for the 12B on vLLM; 19.1 GB against 14.3 GB peak VRAM. That was measured before the tracker fix.
+- **12B runtimes, kept for reference.** vLLM 0.32.0 won this comparison and was the default until the 26B replaced it. Same 30 crops, YOLO running, one runtime on the GPU at a time, fresh server each (`bench/runtime_bench.py`); recognition on the 500 objects above (`bench/recognition_eval.py`). VRAM includes YOLO and about 1.1 GB the Windows desktop holds.
 
   | | vLLM 0.32.0 | SGLang 0.5.22 | mistral.rs 0.9.5 | ExLlamaV3 1.6.4 (TabbyAPI) | Ollama 0.40.10 | llama.cpp b11869 |
   |---|---|---|---|---|---|---|
@@ -63,10 +90,11 @@ What this means: on the 80 COCO classes YOLO's own name is already better than t
 
   vLLM, SGLang, mistral.rs and ExLlamaV3 ran with room for 4 concurrent requests; Ollama and llama.cpp with 1 unless noted. Paired sign tests against vLLM. True box (500 objects): SGLang p ≈ 5e-12, llama.cpp p = 0.02, mistral.rs p = 0.6, ExLlamaV3 p = 0.55. YOLO's box with hint, the path the app uses (222 objects): llama.cpp p = 0.06, SGLang p = 0.35, mistral.rs p = 0.50, ExLlamaV3 p = 0.42, so none is distinguishable from vLLM there.
 
-  vLLM stays the default: accuracy on the app's path cannot be told apart between runtimes, and vLLM is among the fastest at both labelling and chat while labelling. The gaps are small (0.1–0.3 s per label); llama.cpp's lead on the app's path (69.8% vs 65.8%) is not significant but would be worth re-measuring on more objects. SGLang ties vLLM on speed, but in this setup, on the same weights, it names true-box crops much worse without a hint ("handheld microphone" for a wine glass). The cause is not known; its Triton attention backend on this GPU and the patched `config.json` were not examined, so this does not show SGLang's vision is worse in general. Peak VRAM follows each runtime's reservation setting (vLLM 0.5 of the GPU, mistral.rs 8192 KV tokens, ExLlamaV3 a 32768-token cache) rather than what it needs. Startup, measured once: SGLang 225 s (mostly CUDA graph capture), mistral.rs 16 s, ExLlamaV3 15 s.
+  Accuracy on the app's path could not be told apart between runtimes, and vLLM was among the fastest at both labelling and chat while labelling. The gaps are small (0.1–0.3 s per label); llama.cpp's lead on the app's path (69.8% vs 65.8%) is not significant but would be worth re-measuring on more objects. SGLang ties vLLM on speed, but in this setup, on the same weights, it names true-box crops much worse without a hint ("handheld microphone" for a wine glass). The cause is not known; its Triton attention backend on this GPU and the patched `config.json` were not examined, so this does not show SGLang's vision is worse in general. Peak VRAM follows each runtime's reservation setting (vLLM 0.5 of the GPU, mistral.rs 8192 KV tokens, ExLlamaV3 a 32768-token cache) rather than what it needs. Startup, measured once: SGLang 225 s (mostly CUDA graph capture), mistral.rs 16 s, ExLlamaV3 15 s.
 
   Not run: KoboldCpp (llama.cpp-based). Ruled out from their docs and source, not by running them: TensorRT-LLM (cannot load these 4-bit weights), LMDeploy, TGI and MLC-LLM (no Gemma 4 12B vision), ik_llama.cpp (no vision for the 12B). None of the runtimes was tuned beyond what it took to serve; each column is one run.
-- **When the VLM runs.** Once per track, after 3 frames, on one background worker (one request running, one queued). Frames never wait for the model.
-- **Hint.** YOLO's guess is passed with "it is often wrong". With the hint the VLM does better on COCO classes (66% vs 58% lenient on YOLO boxes) and slightly worse on other objects, where it copies YOLO's wrong class about a third of the time.
+- **When the VLM runs.** Once per track, after 15 frames, oldest track first, on 3 background workers; the VLM has 4 slots, so one stays free for chat. A track's name is dropped and asked again if its box changes size more than 4×, since it has probably drifted. Frames never wait for the model. Going from 3 frames and 2× to 15 and 4× named more on the panning clip (24 tracks against 9) and about the same on the rest, one run each. 1 worker against 3 made little difference.
+- **Boxes under 24 pixels a side** are not shown or named: the crop is too small to name, and they would stay "unnamed" for ever.
+- **Hint.** The detector's guess is passed with "it is often wrong". End to end it helps: 43.2% against 39.6% with Objects365 + 26B.
 - **Supply chain.** Python deps resolve only releases at least 7 days old (`exclude-newer = "7 days"`) and are hash-locked in `uv.lock`. llama.cpp and the TabbyAPI source come from checksum-pinned tarballs; TabbyAPI's Python deps (comparison only) are bounded by date, not hash-locked, and torch and exllamav3 are direct URLs without hashes. Images are pinned by tag or digest and were built at least 7 days ago. Weights are checked by sha256.
 - **Licence.** Ultralytics YOLO is AGPL-3.0. Fine for coursework; anything distributed or served to others must follow AGPL or use a differently licensed detector.

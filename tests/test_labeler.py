@@ -52,6 +52,25 @@ def test_asks_once_per_track_after_it_is_stable():
     assert labeler.label(1).name == "真的cup"
 
 
+def test_track_whose_box_changes_size_is_named_again():
+    vlm = FakeVLM()
+    labeler = TrackLabeler(vlm, min_frames=1)
+    labeler.update(FRAME, [det(1, box=(100, 100, 200, 200))], now=0)
+    assert wait_for(lambda: labeler.label(1) is not None)
+    labeler.update(FRAME, [det(1, box=(100, 100, 220, 220))], now=1)  # 1.44x: same object
+    assert len(vlm.calls) == 1
+    labeler.update(FRAME, [det(1, box=(0, 0, 600, 450))], now=2)  # 27x: drifted
+    assert wait_for(lambda: len(vlm.calls) == 2)
+
+
+def test_names_the_biggest_box_first_when_the_model_is_busy():
+    vlm = FakeVLM()
+    labeler = TrackLabeler(vlm, min_frames=1, max_pending=1)
+    labeler.update(FRAME, [det(1, box=(0, 0, 30, 30), name="small"), det(2, box=(0, 0, 300, 300), name="big")], now=0)
+    assert wait_for(lambda: vlm.calls)
+    assert vlm.calls[0][1] == "big"
+
+
 def test_skips_tiny_boxes_and_untracked_detections():
     vlm = FakeVLM()
     labeler = TrackLabeler(vlm, min_frames=1, min_side=24)
