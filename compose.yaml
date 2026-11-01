@@ -82,7 +82,7 @@ services:
       - "/root/.cache/home-vlm/ollama:/root/.ollama"
 
   sglang:
-    image: lmsysorg/sglang:v0.5.22-runtime   # pushed 2026-10-16, digest c3d99f07…54cb
+    image: lmsysorg/sglang:v0.5.22-runtime@sha256:c3d99f078c329a5b2d0c0c02c4237cf8b0dcd1dc6f875a943ae163c1720854cb   # 2026-10-16
     profiles: [bench]
     <<: *gpu
     networks: [internal]
@@ -111,8 +111,7 @@ services:
       - "0.5"
 
   mistralrs:
-    # ghcr.io/ericlbuehler/mistral.rs:cuda130-sm86-0.9.5 (2026-10-19), digest a44f24d1…108c, retagged.
-    image: home-vlm-mistralrs:0.9.5
+    image: ghcr.io/ericlbuehler/mistral.rs:cuda130-sm86-0.9.5@sha256:a44f24d17316774bc3f93f39942b64b38db605ebd520c81e53dbc0dffaf8108c   # 2026-10-19
     profiles: [bench]
     <<: *gpu
     networks: [internal]
