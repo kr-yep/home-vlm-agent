@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from .pipeline import SeenObject
+from .pipeline import BROWSER_IDLE_S, SeenObject
 
 
 class Source(Protocol):
@@ -55,7 +55,8 @@ ul{padding-left:1.2em}li{margin:.3em 0}small{color:#999}
 <script>
 const objects=document.getElementById('objects'),log=document.getElementById('log');
 async function refresh(){try{const r=await fetch('/api/objects');const d=await r.json();
-if(live&&!stream){if(!d.receiving)view.removeAttribute('src');else if(!view.getAttribute('src'))view.src='/stream'}
+if(live&&!stream){if(!d.receiving)view.removeAttribute('src');else if(!view.getAttribute('src'))view.src='/stream';
+if(!camBtn.disabled)camBtn.textContent=d.receiving?'關鏡頭':'開鏡頭'}
 if(d.error){objects.textContent='影像來源有問題：'+d.error;return}
 objects.replaceChildren(...d.objects.map(o=>{const li=document.createElement('li');
 li.textContent=o.name?`${o.name}：${o.detail||''}`:'辨識中…';
@@ -82,15 +83,18 @@ sendFrames(stream)}
 async function sendFrames(mine){while(stream===mine){const t=performance.now();
 canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);
 const jpeg=await new Promise(done=>canvas.toBlob(done,'image/jpeg',0.85));
-try{await fetch('/api/frame',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:jpeg})}catch(e){stopCam('連不上伺服器');return}
+try{const r=await fetch('/api/frame',{method:'POST',headers:{'Content-Type':'image/jpeg'},body:jpeg});if(r.status===410){stopCam('鏡頭已關閉');return}}catch(e){stopCam('連不上伺服器');return}
 await new Promise(done=>setTimeout(done,Math.max(0,FRAME_MS-(performance.now()-t))))}}
-if(live){cam.hidden=false;camBtn.onclick=()=>stream?stopCam():startCam();camSel.onchange=()=>{stopCam();startCam(camSel.value)}}else view.src='/stream';
+async function stopSending(){stopCam();camBtn.disabled=true;camBtn.textContent='關閉中…';await fetch('/api/stop',{method:'POST'});view.removeAttribute('src');
+setTimeout(()=>{camBtn.disabled=false;camBtn.textContent='開鏡頭'},3000)}
+if(live){cam.hidden=false;camBtn.onclick=()=>camBtn.textContent==='開鏡頭'?startCam():stopSending();camSel.onchange=()=>{stopCam();startCam(camSel.value)}}else view.src='/stream';
 setInterval(refresh,1000);refresh();
 </script></html>"""
 
 
 def create_app(source: Source, chatter: Chatter, camera: Camera | None = None) -> FastAPI:
     app = FastAPI(title="home-vlm-agent")
+    refuse_frames_until = 0.0
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
@@ -99,7 +103,7 @@ def create_app(source: Source, chatter: Chatter, camera: Camera | None = None) -
     @app.get("/api/objects")
     def objects() -> dict:
         _, seen, jpeg = source.snapshot()
-        return {"objects": [asdict(obj) for obj in seen], "error": getattr(source, "error", None), "receiving": jpeg is not None}
+        return {"objects": [asdict(obj) for obj in seen], "error": getattr(source, "error", None), "receiving": jpeg is not None and time.monotonic() >= refuse_frames_until}
 
     @app.get("/stream")
     async def stream() -> StreamingResponse:
@@ -117,8 +121,17 @@ def create_app(source: Source, chatter: Chatter, camera: Camera | None = None) -
     if camera:
         @app.post("/api/frame", status_code=204)
         async def frame(request: Request) -> None:
+            if time.monotonic() < refuse_frames_until:
+                raise HTTPException(410, "stopped from the page")
             if not await run_in_threadpool(camera.put, await request.body()):
                 raise HTTPException(400, "not a JPEG image")
+
+    if camera:
+        # Whoever is posting frames gets 410 and should stop; a page or a separate program alike.
+        @app.post("/api/stop", status_code=204)
+        def stop() -> None:
+            nonlocal refuse_frames_until
+            refuse_frames_until = time.monotonic() + BROWSER_IDLE_S
 
     @app.post("/api/chat")
     def chat(body: Question) -> dict:

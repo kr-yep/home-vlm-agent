@@ -3,6 +3,7 @@ import io
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from home_vlm import server
 from home_vlm.pipeline import BrowserCamera, SeenObject
 from home_vlm.server import create_app
 
@@ -98,6 +99,16 @@ def test_frame_that_is_not_an_image_is_refused():
     client = TestClient(create_app(FakeSource([]), FakeChatter(), BrowserCamera()))
     assert client.post("/api/frame", content=b"not a jpeg").status_code == 400
     assert client.post("/api/frame", content=b"").status_code == 400
+
+
+def test_stop_turns_away_whoever_is_sending_frames_for_a_moment(monkeypatch):
+    client = TestClient(create_app(FakeSource([]), FakeChatter(), BrowserCamera()))
+    assert client.post("/api/stop").status_code == 204
+    assert client.post("/api/frame", content=jpeg_bytes()).status_code == 410
+    assert client.get("/api/objects").json()["receiving"] is False
+    monkeypatch.setattr(server, "BROWSER_IDLE_S", 0.0)
+    client.post("/api/stop")
+    assert client.post("/api/frame", content=jpeg_bytes()).status_code == 204
 
 
 def test_no_frame_endpoint_without_a_browser_camera():
