@@ -10,7 +10,7 @@ YOLO tracks boxes on every frame. Each track that lasts 15 frames is cropped and
 git clone https://github.com/kr-yep/home-vlm-agent.git && cd home-vlm-agent && ./start.sh
 ```
 
-That is all, on Linux or WSL2 with Docker, Compose 2.30 or later and an NVIDIA GPU that containers can use, about 20 GB of VRAM. The first run builds the images and fetches the weights, which needs the internet and about 50 GB of free disk (29 GB stays afterwards: 13 GB of images and 16 GB of weights; the rest is room for the build, a margin rather than a measurement). Later runs only start the app: run `./start.sh` again. Copying a finished `models/` folder to `$HVA_DATA/models/` beforehand skips the download, since files with the right sha256 are kept. Weights and video are not in this repository.
+That is all, on Linux or WSL2 with Docker, Compose 2.30 or later and an NVIDIA GPU that containers can use, about 20 GB of VRAM. The first run builds the images and fetches the weights, which needs the internet and about 50 GB of free disk (29 GB stays afterwards: 13 GB of images and 16 GB of weights; the rest is room for the build, a margin rather than a measurement). Here the first run took 33 minutes with the images already built, nearly all of it the download at about 8 MB/s; building the images from nothing took about 11 minutes more. Later runs only start the app, in about 20 s: run `./start.sh` again. Copying a finished `models/` folder to `$HVA_DATA/models/` beforehand skips the download, since files with the right sha256 are kept. Weights and video are not in this repository.
 
 It opens `http://127.0.0.1:8700`; press 開鏡頭 and allow the camera. Browsers allow a camera only on localhost or HTTPS, so this exact address matters. Keep the tab in front (Chrome slows background tabs) and the camera still; boxes appear at once and names within about 5–15 s.
 
@@ -38,7 +38,7 @@ Files under `$HVA_DATA` (default `~/.cache/home-vlm`, recorded in `.env`). `star
 
 YOLO → VLM works end to end in the real app and page (default stack, office clip, browser): all 10 boxes named, chat answers in about 0.8 s, 19.1 GB VRAM peak with YOLO. Neither the app nor the VLM container can reach the internet.
 
-Live camera: the page ran in Chromium with a fake camera device playing a still photo, from a data folder filled by `start.sh`: 15 frames/s reached the app, first name at 4.6 s, all 13 by 13.1 s, chat about 1 s, camera off and on again worked. No physical camera, RTX 5090 or fresh machine has been tried yet.
+Live camera: `start.sh` from a clone of this repository and an empty data folder, then the page in Chromium with a fake camera device playing a still photo: 15 frames/s reached the app, first name at 6.2 s, all 13 by 13.3 s (a second scene: 3.0 s, all 19 by 13.7 s), chat about 1 s, camera off and on again worked. Run on WSL2 with an RTX 3090 and Docker already installed. No physical camera, RTX 5090, plain Linux or fresh machine has been tried yet.
 
 It is good with a still camera and poor with a moving one. On still clips every box above the size limit had a name by the end of a 45 s run (median 7–17 s after it first appeared). On handheld or panning clips few boxes on screen have a name, because half the tracks die within about a second, before an answer can arrive. Not done: memory of objects across time, multiple cameras.
 
