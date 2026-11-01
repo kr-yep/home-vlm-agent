@@ -28,6 +28,15 @@ QUESTIONS = ["畫面裡有什麼？", "這個東西是做什麼用的？", "它�
 
 
 def stream(client: httpx.Client, url: str, body: dict) -> dict:
+    # llama-server with several slots sometimes drops an idle keep-alive connection;
+    # that is a client-side reconnect, not a model failure, so retry once.
+    try:
+        return _stream(client, url, body)
+    except httpx.RemoteProtocolError:
+        return _stream(client, url, body)
+
+
+def _stream(client: httpx.Client, url: str, body: dict) -> dict:
     started = time.perf_counter()
     first = None
     text, usage, timings = [], None, None

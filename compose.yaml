@@ -1,6 +1,6 @@
 # Run from WSL:  docker compose up -d vlm app proxy   → http://127.0.0.1:8700
 # Weights and media come from /root/.cache/home-vlm (see README).
-# `--profile bench` adds llama.cpp and Ollama, kept for the runtime comparison.
+# `--profile bench` adds llama.cpp, Ollama, SGLang, mistral.rs and TabbyAPI, kept for the runtime comparison.
 name: home-vlm
 
 networks:
@@ -80,6 +80,62 @@ services:
     volumes:
       - "/root/.cache/home-vlm/models:/models:ro"
       - "/root/.cache/home-vlm/ollama:/root/.ollama"
+
+  sglang:
+    image: lmsysorg/sglang:v0.5.22-runtime   # pushed 2026-10-16, digest c3d99f07…54cb
+    profiles: [bench]
+    <<: *gpu
+    networks: [internal]
+    shm_size: 4g
+    environment: {HF_HUB_OFFLINE: "1", DO_NOT_TRACK: "1"}
+    # sglang-config.json is the w4a16 config.json plus audio_config.output_proj_dims=640;
+    # without it SGLang assumes 1536 and fails on the audio projection's shape.
+    volumes:
+      - "/root/.cache/home-vlm/models/gemma-4-12b-it-qat-w4a16-ct:/model:ro"
+      - "/root/.cache/home-vlm/models/sglang-config.json:/model/config.json:ro"
+    entrypoint: ["python3", "-m", "sglang.launch_server"]
+    command:
+      - --model-path
+      - /model
+      - --served-model-name
+      - gemma-4-12b-it-qat
+      - --host
+      - 0.0.0.0
+      - --port
+      - "30000"
+      - --context-length
+      - "8192"
+      - --max-running-requests
+      - "4"
+      - --mem-fraction-static
+      - "0.5"
+
+  mistralrs:
+    # ghcr.io/ericlbuehler/mistral.rs:cuda130-sm86-0.9.5 (2026-10-19), digest a44f24d1…108c, retagged.
+    image: home-vlm-mistralrs:0.9.5
+    profiles: [bench]
+    <<: *gpu
+    networks: [internal]
+    environment: {HF_HUB_OFFLINE: "1", DO_NOT_TRACK: "1"}
+    volumes: ["/root/.cache/home-vlm/models:/models:ro"]
+    # The GGUF has no processor files; those come from the w4a16 folder. By default the KV cache
+    # takes all free VRAM and leaves no workspace (every request gets 503), so it is capped.
+    command: [serve, -f, /models/gemma-4-12b-it-qat-q4_0.gguf, --mmproj, /models/mmproj-gemma-4-12b-it-qat-q4_0.gguf,
+              --tok-model-id, /models/gemma-4-12b-it-qat-w4a16-ct, --host, 0.0.0.0, -p, "8090",
+              --max-model-len, "8192", --max-seqs, "4", --kv-cache, 8192tokens, --no-ui]
+
+  tabbyapi:
+    build: {context: docker, dockerfile: tabbyapi.Dockerfile}
+    image: home-vlm-tabbyapi:9979d01
+    profiles: [bench]
+    <<: *gpu
+    networks: [internal]
+    environment: {HF_HUB_OFFLINE: "1", DO_NOT_TRACK: "1"}
+    volumes: ["/root/.cache/home-vlm/models:/models:ro"]
+    # turboderp/gemma-4-12B-it-exl3 @ 4.00bpw_mul1 (0c0ce0e); cache holds 4 requests of 8192.
+    command: [--host, 0.0.0.0, --port, "5000", --disable-auth, "true", --model-dir, /models,
+              --model-name, gemma-4-12b-it-exl3-4.0bpw, --max-seq-len, "8192", --cache-size, "32768",
+              --max-batch-size, "4", --vision, "true"]
 
   app:
     build: .
