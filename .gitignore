@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# Weights, media and run output stay outside Git.
+models/
+media/
+runs/
+*.pt
+*.gguf
+*.mp4

@@ -1,0 +1,105 @@
+# Run from WSL:  docker compose up -d vlm app proxy   → http://127.0.0.1:8700
+# Weights and media come from /root/.cache/home-vlm (see README).
+# `--profile bench` adds llama.cpp and Ollama, kept for the runtime comparison.
+name: home-vlm
+
+networks:
+  internal:
+    internal: true   # no route out: the model and the app cannot phone home
+  edge: {}
+
+x-gpu: &gpu
+  devices: ["nvidia.com/gpu=all"]
+
+services:
+  # vLLM with Google's QAT int4 (w4a16) weights, the HF-format sibling of the GGUF.
+  # Image: upstream vllm/vllm-openai v0.32.0 (built 2026-10-18), already on this machine
+  # as the clean image the Qwen sandbox verified; this service only reads it.
+  vlm:
+    image: local/qwen-vllm-clean:v0.32.0
+    <<: *gpu
+    networks: [internal]
+    environment: {HF_HUB_OFFLINE: "1", VLLM_NO_USAGE_STATS: "1", DO_NOT_TRACK: "1"}
+    volumes: ["/root/.cache/home-vlm/models/gemma-4-12b-it-qat-w4a16-ct:/model:ro"]
+    command:
+      - /model
+      - --served-model-name
+      - gemma-4-12b-it-qat
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --max-model-len
+      - "8192"
+      - --max-num-seqs
+      - "4"
+      - --gpu-memory-utilization
+      - "0.5"    # 12 GB: 8.3 GB weights + KV for 4 short requests; leaves room for YOLO
+
+  llamacpp:
+    build: {context: docker, dockerfile: llamacpp.Dockerfile}
+    image: home-vlm-llamacpp:b11869
+    profiles: [bench]
+    <<: *gpu
+    networks: [internal]
+    volumes: ["/root/.cache/home-vlm/models:/models:ro"]
+    command:
+      - -m
+      - /models/gemma-4-12b-it-qat-q4_0.gguf
+      - --mmproj
+      - /models/mmproj-gemma-4-12b-it-qat-q4_0.gguf
+      - --alias
+      - gemma-4-12b-it-qat
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --n-gpu-layers
+      - "99"
+      - --ctx-size
+      - "8192"
+      - --parallel
+      - "1"
+      - --jinja
+      - --reasoning-budget
+      - "0"
+
+  ollama:
+    image: ollama/ollama:0.40.10
+    profiles: [bench]
+    <<: *gpu
+    networks: [internal]
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      # Match llama-server: 8192 context, flash attention, f16 KV cache.
+      OLLAMA_CONTEXT_LENGTH: "8192"
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: f16
+    volumes:
+      - "/root/.cache/home-vlm/models:/models:ro"
+      - "/root/.cache/home-vlm/ollama:/root/.ollama"
+
+  app:
+    build: .
+    image: home-vlm-app
+    <<: *gpu
+    networks: [internal]
+    depends_on: [vlm]
+    environment:
+      HVA_SOURCE: ${HVA_SOURCE:-/media/kitchen-hotel.webm}
+      HVA_VLM_URL: http://vlm:8000
+      HVA_YOLO: /models/yolo.pt
+    volumes:
+      - "/root/.cache/home-vlm/models:/models:ro"
+      - "/root/.cache/home-vlm/media:/media:ro"
+      - "/root/.cache/home-vlm/runs:/runs"
+
+  proxy:
+    image: home-vlm-app
+    networks: [internal, edge]
+    depends_on: [app]
+    environment: {TARGET_HOST: app, TARGET_PORT: "8700"}
+    command: ["python", "-m", "home_vlm.proxy"]
+    ports: ["127.0.0.1:8700:8700"]
